@@ -57,7 +57,7 @@ If check-in alerts already arrive as text messages, the app can read them. A cle
 **Set up the receiving end once:**
 ```bash
 supabase db push   # or run supabase/migrations/20261016010000_text_checkin.sql in the SQL Editor
-supabase functions deploy inbound-checkin --no-verify-jwt
+supabase functions deploy inbound-checkin   # supabase/config.toml turns off the login check for this one
 supabase secrets set INBOUND_TOKEN=pick-a-long-random-password \
   INBOUND_ALLOWED_FROM=+13365550000          # the number(s) the check-in texts come from
 ```

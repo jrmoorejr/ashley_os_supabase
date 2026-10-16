@@ -1,0 +1,11 @@
+# Supabase only deploys Edge Functions that are declared here (branch previews included).
+project_id = "ashley_os_supabase"
+
+# Sends the SMS/email for a page. Called from the app with the signed-in user's token.
+[functions.page-team]
+verify_jwt = true
+
+# Receives check-in texts from Twilio / iPhone Shortcuts, which can't send a Supabase login.
+# Protected instead by Twilio's signature or the INBOUND_TOKEN header.
+[functions.inbound-checkin]
+verify_jwt = false

@@ -45,7 +45,7 @@ Keep those email or roster agreements. Carriers can ask for proof of opt-in.
 **Opt-in confirmation message (if the form asks):**
 > You're on the [Business name] Market Pager team list and will get showroom paging texts during market. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.
 
-**Website:** your business website. For 10DLC, it should show the business name and match what's on the form.
+**Website:** https://encmotion.com. It must be live (not a "coming soon" page) and show the business name, contact info, SMS terms and a privacy policy. See [website-copy-for-sms-verification.md](website-copy-for-sms-verification.md).
 
 ## 4. While you wait for approval
 

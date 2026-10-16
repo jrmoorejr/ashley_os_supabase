@@ -71,6 +71,15 @@ Deno.serve(async (req) => {
   if (!text.trim()) return isTwilio ? twiml() : json({ error: "text required" }, 400);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const body = text.slice(0, 2000);
+
+  // The whole team gets the same market text; if several phones forward it, handle it once.
+  const { data: seen } = await admin.from("inbound_messages").select("id, status, parsed_dealer")
+    .eq("body", body).gte("received_at", new Date(Date.now() - 15 * 60e3).toISOString())
+    .limit(1).maybeSingle();
+  if (seen) {
+    return isTwilio ? twiml() : json({ status: "already_received", dealer: seen.parsed_dealer, first: seen.status });
+  }
   const [{ data: market }, { data: dealers }, { data: members }] = await Promise.all([
     admin.from("markets").select("id, name").eq("is_active", true).maybeSingle(),
     admin.from("dealers").select("id, name, account_number"),
@@ -89,7 +98,7 @@ Deno.serve(async (req) => {
     && trusted && market && parsed.dealer && parsed.confidence !== "low";
 
   const { data: msg, error: msgErr } = await admin.from("inbound_messages").insert({
-    channel, from_number: from, body: text.slice(0, 2000),
+    channel, from_number: from, body,
     parsed_dealer: parsed.dealer, parsed_party: parsed.party, parsed_account: parsed.account,
     confidence: parsed.confidence,
   }).select().single();
@@ -104,8 +113,13 @@ Deno.serve(async (req) => {
       if (!dealerId) {
         const { data: created, error } = await admin.from("dealers")
           .insert({ name: parsed.dealer, account_number: parsed.account }).select("id").single();
-        if (error) return isTwilio ? twiml() : json({ error: error.message }, 500);
-        dealerId = created.id;
+        if (error?.code === "23505") {
+          // Another phone's copy of this text created the dealer a moment ago.
+          const { data: all } = await admin.from("dealers").select("id, name");
+          dealerId = (all ?? []).find((d) => d.name.trim().toLowerCase() === parsed.dealer!.trim().toLowerCase())?.id ?? null;
+        } else if (error) return isTwilio ? twiml() : json({ error: error.message }, 500);
+        else dealerId = created.id;
+        if (!dealerId) return isTwilio ? twiml() : json({ error: "Could not create dealer" }, 500);
       }
     }
     const { data: open } = await admin.from("visits").select("id")
@@ -117,9 +131,16 @@ Deno.serve(async (req) => {
       const { data: visit, error } = await admin.from("visits").insert({
         market_id: market!.id, dealer_id: dealerId, party: parsed.party, source: "text",
       }).select("id").single();
-      if (error) return isTwilio ? twiml() : json({ error: error.message }, 500);
-      await admin.from("inbound_messages").update({ status: "checked_in", visit_id: visit.id, handled_at: new Date().toISOString() }).eq("id", msg.id);
-      result = { status: "checked_in", dealer: parsed.dealer };
+      if (error?.code === "23505") {
+        // Another copy of this check-in won the race.
+        await admin.from("inbound_messages").update({ status: "duplicate", handled_at: new Date().toISOString() }).eq("id", msg.id);
+        result = { status: "duplicate", dealer: parsed.dealer };
+      } else if (error) {
+        return isTwilio ? twiml() : json({ error: error.message }, 500);
+      } else {
+        await admin.from("inbound_messages").update({ status: "checked_in", visit_id: visit.id, handled_at: new Date().toISOString() }).eq("id", msg.id);
+        result = { status: "checked_in", dealer: parsed.dealer };
+      }
     }
   } else {
     result.reason = !market ? "No active market" : !trusted ? "Sender not on the allowed list" : !parsed.dealer ? "Couldn't find a dealer name" : "Auto check-in is off";

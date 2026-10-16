@@ -4,6 +4,10 @@
 
 alter table public.visits add column source text not null default 'app' check (source in ('app', 'text'));
 
+-- The same market text often lands on several reps' phones and gets forwarded more than once.
+-- A dealer can only have one open visit per market, so duplicates can't double-check them in.
+create unique index visits_one_open on public.visits (market_id, dealer_id) where checked_out_at is null;
+
 create table public.inbound_messages (
   id               uuid primary key default gen_random_uuid(),
   received_at      timestamptz not null default now(),

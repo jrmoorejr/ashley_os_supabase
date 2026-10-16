@@ -66,13 +66,17 @@ The function's address is `https://<your-project>.supabase.co/functions/v1/inbou
 **Then pick how the texts reach it.** Options are listed from most to least automatic.
 
 1. **Have the texts sent to the app's number.** This is the best option when the alerts come from a system or a front desk. In Twilio, open *Phone Numbers → your number → Messaging → "A message comes in"*, choose *Webhook, HTTP POST*, and paste the function address. Then ask whoever sends the check-in texts to add that number to their list. No phone is involved.
-2. **Auto-forward from an iPhone** (iOS 17 or later). Open the Shortcuts app and go to *Automation → + → Message*. Set *Sender* to whoever sends the check-ins (and optionally *Message Contains* "checked in"). Choose **Run Immediately**, then add the action **Get Contents of URL** with these settings:
-   - URL: the function address
-   - Method: POST
-   - Headers: `x-pager-token` = your INBOUND_TOKEN
-   - Request Body: JSON, key `text` = *Shortcut Input → Message*
+2. **Auto-forward from an iPhone** (iOS 17 or later). **This is the recommended setup for the market's own check-in texts**, which come from short code **274-539** (saved on most phones as "High Point/Las Vegas"). Short codes usually can't text a Twilio number, so the phone has to pass them along. On one or more reps' iPhones:
+   1. Open **Shortcuts → Automation → + (New Automation) → Message**.
+   2. **Sender → Choose →** the *High Point/Las Vegas* contact (274-539). Leave *Message Contains* blank for now.
+   3. Select **Run Immediately** and turn off *Notify When Run*. Tap **Next → New Blank Automation**.
+   4. Add the action **Get Contents of URL**. Paste the function address, then tap the arrow to show more options:
+      - **Method:** POST
+      - **Headers:** add `x-pager-token` = your INBOUND_TOKEN
+      - **Request Body:** JSON. Add a *Text* field with key `text`, and set its value to *Shortcut Input*. Tap that variable and choose **Content**.
+   5. Tap **Done**.
 
-   The phone sends each matching text to the app in the background.
+   Every check-in text from the market now reaches the board within seconds, and the phone doesn't need to be unlocked. More than one rep can set this up for backup. When several phones send the same text, the dealer is still checked in only once.
 3. **Auto-forward from Android.** Use an SMS-forwarding app such as MacroDroid, Tasker, or SMS Forwarder. Have it post the same JSON to the same address with the same header, or forward the text to the Twilio number.
 4. **By hand.** Long-press the text, tap Forward, and send it to the app's number. Team members' cell numbers are trusted automatically. Or paste the text into the box at the top of *Check in*, which fills in the form for you.
 

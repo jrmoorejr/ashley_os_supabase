@@ -118,8 +118,9 @@ Deno.serve(async (req) => {
     const from = first.requester?.full_name ? ` Sent by ${first.requester.full_name}.` : "";
     const text = `MARKET PAGE: ${dealer}${party} is ready for ${divisions}.${from}` + (appUrl ? ` ${appUrl}` : "");
 
+    // Carriers require opt-out instructions on business texts; Twilio handles STOP/HELP replies itself.
     const sms: Result = member.notify_sms && member.phone
-      ? await sendSms(member.phone, text)
+      ? await sendSms(member.phone, `${text} Reply STOP to opt out.`)
       : { status: "skipped", detail: member.phone ? "SMS off for member" : "No phone" };
     const email: Result = member.notify_email && member.email
       ? await sendEmail(member.email, `Market page: ${dealer} → ${divisions}`, text)

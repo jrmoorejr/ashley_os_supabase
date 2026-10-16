@@ -27,12 +27,12 @@ Replace the parts in [brackets].
 **Use case / category:** Account notifications (internal team alerts). For 10DLC, choose the *Low Volume Mixed* campaign type.
 
 **Campaign / use case description:**
-> [Business name] uses this number to send internal paging alerts to its own sales representatives during furniture market events (High Point, NC and Las Vegas, NV). When a dealer customer finishes viewing one product division in our showroom, a rep pages the next division, and the reps assigned to that division receive a text saying which dealer is ready for them. Messages go only to our own team members. No marketing or promotional content is sent.
+> Creative Connection by Christy, Inc. uses this number to send internal paging alerts to its own sales representatives during furniture market events (High Point, NC and Las Vegas, NV). When a dealer customer finishes viewing one product division in our showroom, a rep pages the next division, and the reps assigned to that division receive a text saying which dealer is ready for them. Messages go only to our own team members. No marketing or promotional content is sent.
 
 **Message volume:** Under 100 messages per day, during market weeks only.
 
 **How recipients opt in:**
-> Recipients are [Business name] sales representatives. Each rep gives their mobile number to the sales manager on our team roster and agrees, in writing (email or signed roster), to receive showroom paging texts during market events. The manager then adds them to our internal Market Pager app. Reps can reply STOP at any time to stop messages, and HELP for help.
+> Recipients are Creative Connection by Christy, Inc. sales representatives. Each rep gives their mobile number to the sales manager on our team roster and agrees, in writing (email or signed roster), to receive showroom paging texts during market events. The manager then adds them to our internal Market Pager app. Reps can reply STOP at any time to stop messages, and HELP for help.
 
 Keep those email or roster agreements. Carriers can ask for proof of opt-in.
 
@@ -43,7 +43,7 @@ Keep those email or roster agreements. Carriers can ask for proof of opt-in.
 **Opt-out / help keywords:** STOP, HELP. Twilio handles these automatically.
 
 **Opt-in confirmation message (if the form asks):**
-> You're on the [Business name] Market Pager team list and will get showroom paging texts during market. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.
+> You're on the Creative Connection by Christy, Inc. Market Pager team list and will get showroom paging texts during market. Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.
 
 **Website:** https://encmotion.com. It must be live (not a "coming soon" page) and show the business name, contact info, SMS terms and a privacy policy. See [website-copy-for-sms-verification.md](website-copy-for-sms-verification.md).
 

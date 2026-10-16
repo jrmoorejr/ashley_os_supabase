@@ -1,0 +1,28 @@
+# Secrets. Supabase function secrets (Twilio, Resend, INBOUND_TOKEN, the
+# service role key) belong in `supabase secrets set` or the dashboard, never here.
+.env
+.env.*
+!.env.example
+supabase/.env
+supabase/functions/.env
+*.pem
+*.key
+*.p12
+*service-account*.json
+*credentials*.json
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+.claude/

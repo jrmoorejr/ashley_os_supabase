@@ -15,7 +15,7 @@
 // to skip the confirmation text, INBOUND_PUBLIC_URL if the function sits behind a custom domain.
 
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-import { parseCheckin } from "../_shared/checkin-parser.js";
+import { matchMember, parseCheckin } from "../_shared/checkin-parser.js";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -83,10 +83,17 @@ Deno.serve(async (req) => {
   const [{ data: market }, { data: dealers }, { data: members }] = await Promise.all([
     admin.from("markets").select("id, name").eq("is_active", true).maybeSingle(),
     admin.from("dealers").select("id, name, account_number"),
-    admin.from("team_members").select("id, phone").eq("active", true),
+    admin.from("team_members").select("id, full_name, phone").eq("active", true),
   ]);
 
   const parsed = parseCheckin(text, dealers ?? []);
+
+  // Opt-in confirmations and similar aren't check-ins: keep a record, but don't bother anyone.
+  if (parsed.ignore) {
+    await admin.from("inbound_messages").insert({ channel, from_number: from, body, confidence: "low", status: "ignored", handled_at: new Date().toISOString() });
+    return isTwilio ? twiml() : json({ status: "ignored" });
+  }
+  const askedFor = matchMember(parsed.requestedRep, members ?? []);
 
   // Who do we trust to check someone in without a human looking first?
   const allowed = new Set([
@@ -130,6 +137,7 @@ Deno.serve(async (req) => {
     } else {
       const { data: visit, error } = await admin.from("visits").insert({
         market_id: market!.id, dealer_id: dealerId, party: parsed.party, source: "text",
+        requested_rep_id: askedFor?.id ?? null, requested_rep_name: parsed.requestedRep, meet_location: parsed.location,
       }).select("id").single();
       if (error?.code === "23505") {
         // Another copy of this check-in won the race.

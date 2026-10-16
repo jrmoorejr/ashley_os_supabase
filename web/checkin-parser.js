@@ -2,10 +2,16 @@
 // Shared by the inbound-checkin Edge Function and the web app (web/checkin-parser.js is an
 // identical copy; tests/parser.test.mjs fails if they drift apart).
 //
-// parseCheckin(text, knownDealers) -> { dealer, dealerId, party, account, confidence }
-//   confidence: 'high'   matched a dealer already in the system
+// parseCheckin(text, knownDealers) ->
+//   { dealer, dealerId, party, account, requestedRep, location, confidence, ignore }
+//   confidence: 'high'   matched a dealer already in the system, or the market's own check-in format
 //               'medium' matched a check-in phrase ("X checked in", "Dealer: X", ...)
 //               'low'    couldn't find a dealer name; send to the review inbox
+//   ignore:     true for housekeeping texts (opt-in confirmations, STOP/HELP replies) that aren't check-ins
+//
+// The High Point / Las Vegas market front desk (short code 274-539) sends:
+//   "J.R. MOORE – Meet SHELBY SARI from FURNITURELAND SOUTH at Front Desk"
+//    rep asked for     buyer               dealer                 location
 
 const FILLER_PREFIX = /^(?:fwd?:\s*|re:\s*|reminder:\s*|alert:\s*|your\s+)?(?:guest|customer|dealer|visitor|client|account|retailer|buyer)s?\s+/i;
 const STOP_AT = /\s+(?:with|w\/|along with|accompanied by|at the|at your|to see|in the|has|have|is|are|just|-|–|—|\|)\s+.*$|\s*[(\[].*$|[.!,;]+\s*$/i;
@@ -24,6 +30,33 @@ const PHRASES = [
   /\b(?:check(?:ed)?[\s-]*in|arrival|arrived|now here|new arrival|here now)\s*[:\-–]\s*(.+)$/i,
 ];
 
+// Market format: "<REP> – Meet <BUYER> from <DEALER> at <LOCATION>"
+const MARKET_MEET = /^\s*(.+?)\s*[–—-]+\s*meet\s+(.+?)\s+from\s+(.+?)\s*[.!]?\s*$/i;
+const HOUSEKEEPING = /\b(?:opted in|opt[- ]?in|opted out|opt[- ]?out|unsubscribe|reply stop|text stop|msg ?& ?data rates|message and data rates|reply help)\b/i;
+
+const KEEP_UPPER = new Set(['LLC', 'USA', 'II', 'III', 'IV', 'HQ', 'DBA']);
+const SMALL = new Set(['of', 'and', 'the', 'at', 'for', 'to', 'in', 'on', 'by', 'a', 'an']);
+// "FURNITURELAND SOUTH" -> "Furnitureland South"; leaves already mixed-case text alone.
+export function smartCase(s) {
+  s = String(s || '').trim();
+  if (!s || /[a-z]/.test(s)) return s;
+  return s.toLowerCase().split(/(\s+)/).map((w, i) => {
+    if (/^\s+$/.test(w)) return w;
+    const up = w.toUpperCase();
+    if (KEEP_UPPER.has(up.replace(/[^A-Z]/g, '')) || (/^[A-Z]{2,4}$/.test(up) && !/[AEIOUY]/.test(up))) return up;
+    if (i > 0 && SMALL.has(w)) return w;
+    return w.replace(/(^|[-/.(&]|\b[od]')([a-z])/g, (_, a, b) => a + b.toUpperCase());
+  }).join('');
+}
+
+// Match a name from a text ("J.R. MOORE") to a team member ("JR Moore", "J.R. Moore").
+export function matchMember(name, members = []) {
+  const key = n => String(n || '').toLowerCase().replace(/[^a-z]/g, '');
+  const k = key(name);
+  if (!k) return null;
+  return members.find(m => key(m.full_name) === k) || null;
+}
+
 const clean = s => String(s || '').replace(/\s+/g, ' ').trim();
 const norm = s => clean(s).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\b(?:inc|llc|co|corp|the)\b/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -41,8 +74,22 @@ export function parseCheckin(text, knownDealers = []) {
     .replace(/\r/g, ''));
   const lines = String(text || '').split(/\n+/).map(clean).filter(Boolean)
     .map(l => l.replace(/^(?:fwd?|re):\s*/i, ''));
-  const out = { dealer: null, dealerId: null, party: null, account: null, confidence: 'low' };
+  const out = { dealer: null, dealerId: null, party: null, account: null, requestedRep: null, location: null, confidence: 'low', ignore: false };
   if (!body) return out;
+
+  // The market's own front-desk format.
+  const mm = body.match(MARKET_MEET);
+  if (mm) {
+    const rest = mm[3];
+    const at = rest.toLowerCase().lastIndexOf(' at ');
+    out.requestedRep = smartCase(mm[1]);
+    out.party = smartCase(mm[2]);
+    out.dealer = smartCase(at > 0 ? rest.slice(0, at) : rest).replace(/[.!,;]+$/, '');
+    out.location = at > 0 ? smartCase(rest.slice(at + 4)).replace(/[.!,;]+$/, '') : null;
+    out.confidence = 'high';
+    return preferKnown(out, body, knownDealers, true);
+  }
+  if (HOUSEKEEPING.test(body)) { out.ignore = true; return out; }
 
   // Account number
   const acct = body.match(/\b(?:acct|account|cust(?:omer)?|dealer)\s*(?:#|no\.?|num(?:ber)?)\s*:?\s*([A-Z0-9][A-Z0-9-]{2,})/i)
@@ -81,13 +128,17 @@ export function parseCheckin(text, knownDealers = []) {
     if (n) partyBits.push(`party of ${n[1]}`);
   }
   if (partyBits.length) out.party = partyBits.join(', ').slice(0, 120);
+  if (out.dealer) out.dealer = smartCase(out.dealer);
+  return preferKnown(out, body, knownDealers);
+}
 
-  // Prefer a dealer we already know: by account number, exact name, or name appearing in the text.
+// Prefer a dealer we already know: by account number, exact name, or name appearing in the text.
+function preferKnown(out, body, knownDealers, exactOnly = false) {
   if (knownDealers.length) {
     const nb = ' ' + norm(body) + ' ';
     let match = out.account && knownDealers.find(d => d.account_number && String(d.account_number).toLowerCase() === out.account.toLowerCase());
     if (!match && out.dealer) match = knownDealers.find(d => norm(d.name) === norm(out.dealer));
-    if (!match) {
+    if (!match && !exactOnly) {
       match = knownDealers
         .filter(d => norm(d.name).length >= 4 && nb.includes(' ' + norm(d.name) + ' '))
         .sort((a, b) => norm(b.name).length - norm(a.name).length)[0];

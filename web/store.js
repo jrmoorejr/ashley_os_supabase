@@ -79,7 +79,7 @@ function seedDemo() {
   const db = Object.fromEntries(TABLES.map(t => [t, []]));
   db.divisions = DEFAULT_DIVISIONS.map(([name, color], i) => ({ id: uid(), name, color, sort_order: i + 1, active: true }));
   const people = [
-    ['Jordan Moore', 'jordan@example.com', '+13365550101', ['Motion'], 'admin'],
+    ['J.R. Moore', 'jr@example.com', '+13365550101', ['Motion'], 'admin'],
     ['Avery Lee', 'avery@example.com', '+13365550102', ['Motion', 'Stationary'], 'rep'],
     ['Sam Patel', 'sam@example.com', '+13365550103', ['Case Goods'], 'rep'],
     ['Riley Brooks', 'riley@example.com', '+13365550104', ['Bedding'], 'rep'],
@@ -94,7 +94,7 @@ function seedDemo() {
   db.markets.push({ id: uid(), name: 'Demo Market', is_active: true, created_at: new Date().toISOString() });
   // A text the app couldn't read on its own, so the review inbox has something in it.
   db.inbound_messages.push({ id: uid(), received_at: new Date().toISOString(), channel: 'sms', from_number: '+13365550188',
-    body: 'Heads up, the owner from Riverside Home Center is at reception asking for Bedding', parsed_dealer: null,
+    body: 'Heads up, the owner from Riverside Home Center is at reception asking for Bedding (example of a text the app needs help with)', parsed_dealer: null,
     parsed_party: null, parsed_account: null, confidence: 'low', status: 'pending' });
   return db;
 }

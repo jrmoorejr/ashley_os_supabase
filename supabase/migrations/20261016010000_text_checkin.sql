@@ -2,7 +2,11 @@
 -- Texts arrive at the inbound-checkin Edge Function (Twilio number, iPhone Shortcut, Android forwarder).
 -- Clear ones check the dealer in automatically; unclear ones wait in the app's review inbox.
 
-alter table public.visits add column source text not null default 'app' check (source in ('app', 'text'));
+alter table public.visits
+  add column source             text not null default 'app' check (source in ('app', 'text')),
+  add column requested_rep_id   uuid references public.team_members(id) on delete set null,  -- who the buyer asked for
+  add column requested_rep_name text,                                                        -- as written in the text
+  add column meet_location      text;                                                        -- e.g. Front Desk
 
 -- The same market text often lands on several reps' phones and gets forwarded more than once.
 -- A dealer can only have one open visit per market, so duplicates can't double-check them in.

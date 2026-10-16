@@ -255,3 +255,5 @@ blockquote cite { display: block; font-style: normal; font-size: .75rem; color: 
 .paste textarea { margin-bottom: .5rem; }
 .paste p { margin: .5rem 0 0; }
 @media (max-width: 520px) { .inbox-fields { grid-template-columns: 1fr; } }
+.asked { color: var(--otw); }
+.asked b { color: var(--text); }

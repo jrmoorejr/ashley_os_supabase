@@ -1,5 +1,5 @@
 import { DemoStore, SupabaseStore } from './store.js';
-import { parseCheckin } from './checkin-parser.js';
+import { parseCheckin, matchMember } from './checkin-parser.js';
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -204,7 +204,7 @@ async function run(fn, okMsg) {
   catch (e) { console.error(e); toast(e.message || String(e), 'err'); }
 }
 
-async function checkIn({ name, account, city, st, party, notes, pageDivs = [], source = 'app' }) {
+async function checkIn({ name, account, city, st, party, notes, pageDivs = [], source = 'app', requestedRep = null, location = null }) {
   const existing = D().dealers.find(d => d.name.trim().toLowerCase() === name.trim().toLowerCase());
   let dealer = existing;
   if (!dealer) [dealer] = await store.insert('dealers', { name: name.trim(), account_number: account || null, city: city || null, state: st || null, created_at: nowIso() });
@@ -214,6 +214,10 @@ async function checkIn({ name, account, city, st, party, notes, pageDivs = [], s
   const [visit] = await store.insert('visits', {
     market_id: D().market.id, dealer_id: dealer.id, party: party || null, notes: notes || null,
     checked_in_at: nowIso(), checked_in_by: state.me?.id || null, source,
+    ...(requestedRep || location ? {
+      requested_rep_id: matchMember(requestedRep, D().team_members)?.id || null,
+      requested_rep_name: requestedRep, meet_location: location,
+    } : {}),
   });
   await reload();
   if (pageDivs.length) await pageDivisions(visit, pageDivs);
@@ -267,7 +271,7 @@ const inboxItems = () => (D().inbound_messages || [])
 
 async function checkInFromText(msg, name, party) {
   const parsed = parseCheckin(msg.body, D().dealers);
-  const visit = await checkIn({ name, party, account: parsed.account, notes: null, source: 'text' });
+  const visit = await checkIn({ name, party, account: parsed.account, notes: null, source: 'text', requestedRep: parsed.requestedRep, location: parsed.location });
   await store.update('inbound_messages', msg.id, { status: 'checked_in', visit_id: visit.id, handled_by: state.me?.id || null, handled_at: nowIso() });
   return visit;
 }
@@ -275,6 +279,10 @@ async function checkInFromText(msg, name, party) {
 // Demo only: what the inbound-checkin Edge Function does when a text arrives.
 async function simulateIncomingText(body) {
   const parsed = parseCheckin(body, D().dealers);
+  if (parsed.ignore) {
+    await store.insert('inbound_messages', { received_at: nowIso(), channel: 'sms', from_number: '274539', body, confidence: 'low', status: 'ignored' });
+    return { status: 'ignored' };
+  }
   const [msg] = await store.insert('inbound_messages', {
     received_at: nowIso(), channel: 'sms', from_number: '+13365550188', body,
     parsed_dealer: parsed.dealer, parsed_party: parsed.party, parsed_account: parsed.account,
@@ -376,7 +384,7 @@ function floorView() {
   if (state.filter !== 'all') list = list.filter(v => statusOf(v).k === state.filter);
   if (state.mineOnly) list = list.filter(v => {
     const s = statusOf(v);
-    return (s.walk && mine.has(s.walk.division_id)) || [...openPages(v), ...onTheWay(v)].some(p => mine.has(p.division_id));
+    return v.requested_rep_id === state.me?.id || (s.walk && mine.has(s.walk.division_id)) || [...openPages(v), ...onTheWay(v)].some(p => mine.has(p.division_id));
   });
   if (state.search) list = list.filter(v => (dealerOf(v).name + ' ' + (v.party || '') + ' ' + (dealerOf(v).account_number || '')).toLowerCase().includes(state.search.toLowerCase()));
 
@@ -389,7 +397,7 @@ function floorView() {
     </div>
     <div class="toolbar">
       <input type="search" id="search" placeholder="Search dealer, account, party" value="${esc(state.search)}">
-      ${mine.size ? `<label class="toggle"><input type="checkbox" data-action="mine" ${state.mineOnly ? 'checked' : ''}> My divisions</label>` : ''}
+      ${mine.size ? `<label class="toggle"><input type="checkbox" data-action="mine" ${state.mineOnly ? 'checked' : ''}> Mine</label>` : ''}
       <button class="btn" data-action="nav" data-view="checkin">+ Check in</button>
     </div>
     ${list.length ? `<div class="cards">${list.map(dealerCard).join('')}</div>`
@@ -420,6 +428,7 @@ function dealerCard(v) {
         </div>
         <div class="total" title="Total time in showroom">${timer(v.checked_in_at)}<span>in showroom</span></div>
       </div>
+      ${v.requested_rep_name || v.meet_location ? `<div class="asked small">Asked for <b>${esc(v.requested_rep_id ? memName(v.requested_rep_id) : v.requested_rep_name || 'anyone')}</b>${v.meet_location ? ` · at ${esc(v.meet_location)}` : ''}</div>` : ''}
       <div class="status">
         <span class="badge b-${s.k}">${esc(s.label)}</span>
         ${s.sub ? `<span class="muted">${esc(s.sub)}</span>` : ''}
@@ -444,7 +453,7 @@ function checkInView() {
       <h2>Check in a dealer</h2>
       <details class="paste" ${store.kind === 'demo' ? 'open' : ''}>
         <summary>📱 Got a check-in text? Paste it here</summary>
-        <textarea id="paste-text" rows="3" placeholder="e.g. Coastal Home has checked in with Mary Jones and 2 buyers"></textarea>
+        <textarea id="paste-text" rows="3" placeholder="e.g. J.R. MOORE – Meet SHELBY SARI from FURNITURELAND SOUTH at Front Desk"></textarea>
         <div class="row-actions">
           <button class="btn small" type="button" data-action="paste-fill">Fill in the form</button>
           ${store.kind === 'demo' ? `<button class="btn small ghost" type="button" data-action="simulate-text">Simulate it arriving by text</button>` : ''}
@@ -504,7 +513,8 @@ function logRows() {
   const visits = [...D().visits].sort(byTime('checked_in_at'));
   for (const v of visits) {
     const d = dealerOf(v), walks = walksOf(v);
-    const base = { market: D().market?.name, dealer: d.name, account: d.account_number || '', party: v.party || '', checked_in: v.checked_in_at, checked_out: v.checked_out_at || '', showroom_min: minutes(v.checked_in_at, v.checked_out_at) };
+    const base = { market: D().market?.name, dealer: d.name, account: d.account_number || '', party: v.party || '',
+      asked_for: v.requested_rep_id ? memName(v.requested_rep_id) : v.requested_rep_name || '', source: v.source || 'app', checked_in: v.checked_in_at, checked_out: v.checked_out_at || '', showroom_min: minutes(v.checked_in_at, v.checked_out_at) };
     if (!walks.length) rows.push({ ...base, division: '', rep: '', started: '', ended: '', division_min: '' });
     for (const w of walks) rows.push({ ...base, division: divName(w.division_id), rep: memName(w.rep_id), started: w.started_at, ended: w.ended_at || '', division_min: minutes(w.started_at, w.ended_at) });
   }
@@ -914,14 +924,14 @@ document.addEventListener('click', async e => {
       if (!text) { toast('Paste or type a text first', 'warn'); return; }
       const r = await run(() => simulateIncomingText(text));
       if (!r) return;
-      toast(r.status === 'checked_in' ? `Text received. ${r.dealer} checked in` : r.status === 'duplicate' ? `${r.dealer} is already here` : 'Text received. Sent to the review inbox on Floor');
+      toast(r.status === 'checked_in' ? `Text received. ${r.dealer} checked in` : r.status === 'duplicate' ? `${r.dealer} is already here` : r.status === 'ignored' ? "Not a check-in (opt-in or similar), so it's ignored" : 'Text received. Sent to the review inbox on Floor');
       state.view = 'floor'; LS.set('mp-view', 'floor'); render();
       return;
     }
     case 'template': csvModal('market-pager-team-template.csv', 'Name,Email,Cell,Divisions,Role\nJordan Moore,jordan@company.com,336-555-0101,Motion,admin\nAvery Lee,avery@company.com,336-555-0102,Motion; Stationary,rep\n'); return;
     case 'export': {
       const rows = logRows();
-      const cols = ['market', 'dealer', 'account', 'party', 'checked_in', 'checked_out', 'showroom_min', 'division', 'rep', 'started', 'ended', 'division_min'];
+      const cols = ['market', 'dealer', 'account', 'party', 'asked_for', 'source', 'checked_in', 'checked_out', 'showroom_min', 'division', 'rep', 'started', 'ended', 'division_min'];
       const fmt = (k, val) => /checked_|started|ended/.test(k) && val ? new Date(val).toLocaleString() : val;
       csvModal(`market-log-${(D().market?.name || 'market').replace(/\W+/g, '-')}.csv`, [cols.join(','), ...rows.map(r => cols.map(k => csvCell(fmt(k, r[k]))).join(','))].join('\n'));
       return;

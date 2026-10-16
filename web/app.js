@@ -562,6 +562,30 @@ function openModal(html, onMount) {
   root.hidden = false;
   onMount?.(root);
 }
+// In-app confirmation (browser confirm() is unreliable on phones and in embedded views).
+function confirmModal(message, okLabel, onOk) {
+  openModal(`<h2>${esc(message)}</h2>
+    <div class="sheet-actions"><button class="btn primary big danger-fill" id="confirm-ok">${esc(okLabel)}</button>
+    <button class="btn ghost" data-action="close-modal">Cancel</button></div>`, root => {
+    $('#confirm-ok', root).addEventListener('click', () => { closeModal(); onOk(); });
+  });
+}
+
+// Show CSV with Download + Copy, since some browsers block direct downloads.
+function csvModal(name, text) {
+  openModal(`<h2>${esc(name)}</h2>
+    <textarea id="csv-out" rows="10" readonly>${esc(text)}</textarea>
+    <div class="sheet-actions"><button class="btn primary" id="csv-dl">Download .csv</button>
+    <button class="btn ghost" id="csv-copy">Copy (paste into Excel)</button>
+    <button class="btn ghost" data-action="close-modal">Close</button></div>`, root => {
+    $('#csv-dl', root).addEventListener('click', () => download(name, text));
+    $('#csv-copy', root).addEventListener('click', () => {
+      navigator.clipboard?.writeText(text).then(() => toast('Copied — paste into Excel'))
+        .catch(() => { $('#csv-out', root).select(); toast('Selected — press copy', 'warn'); });
+    });
+  });
+}
+
 function closeModal() { const r = $('#modal'); r.hidden = true; r.innerHTML = ''; }
 
 // "Where to next?" — multi-select, seen divisions grayed out.
@@ -807,24 +831,22 @@ document.addEventListener('click', async e => {
     case 'repage': closeModal(); await run(() => store.notify([p.id]), 'Page re-sent'); return;
     case 'cancel-page': closeModal(); await run(() => store.update('pages', p.id, { cancelled_at: nowIso() }), 'Page cancelled'); return;
     case 'checkout':
-      if (!confirm(`Check out ${dealerOf(v).name}?`)) return;
-      closeModal(); await run(() => checkOut(v), `${dealerOf(v).name} checked out`); return;
+      confirmModal(`Check out ${dealerOf(v).name}?`, 'Check out', () => run(() => checkOut(v), `${dealerOf(v).name} checked out`)); return;
     case 'member': memberModal(el.dataset.id || null); return;
     case 'delete-member':
-      if (!confirm('Remove this team member? (To keep their history, uncheck Active instead.)')) return;
-      closeModal(); await run(() => store.remove('team_members', { id: el.dataset.id }), 'Removed'); return;
+      confirmModal('Remove this team member? To keep their history, uncheck Active instead.', 'Remove', () => run(() => store.remove('team_members', { id: el.dataset.id }), 'Removed')); return;
     case 'import': importModal(); return;
-    case 'template': download('market-pager-team-template.csv', 'Name,Email,Cell,Divisions,Role\nJordan Moore,jordan@company.com,336-555-0101,Motion,admin\nAvery Lee,avery@company.com,336-555-0102,Motion; Stationary,rep\n'); return;
+    case 'template': csvModal('market-pager-team-template.csv', 'Name,Email,Cell,Divisions,Role\nJordan Moore,jordan@company.com,336-555-0101,Motion,admin\nAvery Lee,avery@company.com,336-555-0102,Motion; Stationary,rep\n'); return;
     case 'export': {
       const rows = logRows();
       const cols = ['market', 'dealer', 'account', 'party', 'checked_in', 'checked_out', 'showroom_min', 'division', 'rep', 'started', 'ended', 'division_min'];
       const fmt = (k, val) => /checked_|started|ended/.test(k) && val ? new Date(val).toLocaleString() : val;
-      download(`market-log-${(D().market?.name || 'market').replace(/\W+/g, '-')}.csv`, [cols.join(','), ...rows.map(r => cols.map(k => csvCell(fmt(k, r[k]))).join(','))].join('\n'));
+      csvModal(`market-log-${(D().market?.name || 'market').replace(/\W+/g, '-')}.csv`, [cols.join(','), ...rows.map(r => cols.map(k => csvCell(fmt(k, r[k]))).join(','))].join('\n'));
       return;
     }
     case 'signout': await store.signOut(); location.reload(); return;
     case 'login-back': state.loginSent = false; render(); return;
-    case 'reset-demo': if (confirm('Erase demo data and start over?')) { store.reset(); state.alerted.clear(); } return;
+    case 'reset-demo': confirmModal('Erase demo data and start over?', 'Reset demo', () => { store.reset(); state.alerted.clear(); }); return;
   }
 });
 

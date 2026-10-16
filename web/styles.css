@@ -47,9 +47,10 @@ a { color: inherit; }
 
 /* Header + tabs */
 .top {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
   display: flex; align-items: center; justify-content: space-between; gap: .75rem;
-  padding: .7rem 16px; background: var(--surface); border-bottom: 1px solid var(--line);
+  padding-block: .7rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); background: var(--surface); border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .logo { font-size: 1.6rem; }
@@ -58,7 +59,8 @@ a { color: inherit; }
 .me { display: flex; align-items: center; gap: .5rem; }
 .who { font-size: .85rem; color: var(--muted); white-space: nowrap; }
 .tabs {
-  display: flex; gap: .25rem; overflow-x: auto; padding: .5rem 16px;
+  display: flex; gap: .25rem; overflow-x: auto; padding-block: .5rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: var(--surface); border-bottom: 1px solid var(--line); scrollbar-width: none;
 }
 .tab {
@@ -68,7 +70,11 @@ a { color: inherit; }
 .tab.on { background: var(--accent); color: var(--accent-text); }
 .dot { background: var(--paging); color: #fff; border-radius: 999px; padding: 0 .45em; font-size: .75rem; margin-left: .2rem; }
 
-main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+main {
+  padding-block: 16px; max-width: 1200px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
 
 /* Buttons */
 .btn {
@@ -79,6 +85,7 @@ main { padding: 16px; max-width: 1200px; margin: 0 auto; }
 .btn.primary { background: var(--with); border-color: var(--with); color: #fff; }
 .btn.ghost { background: transparent; color: var(--text); border-color: var(--line); }
 .btn.danger { color: var(--danger); }
+.btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn.small { min-height: 34px; padding: .3rem .7rem; font-size: .85rem; }
 .btn.big { width: 100%; min-height: 50px; font-size: 1.05rem; }
 .btn:active { transform: translateY(1px); }

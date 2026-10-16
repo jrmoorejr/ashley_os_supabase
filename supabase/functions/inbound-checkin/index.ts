@@ -60,9 +60,12 @@ Deno.serve(async (req) => {
     text = params.get("Body") ?? "";
     from = params.get("From");
   } else {
-    const token = Deno.env.get("INBOUND_TOKEN");
+    // The password can come from the INBOUND_TOKEN secret or from Settings in the app (app_settings).
     const given = req.headers.get("x-pager-token") ?? new URL(req.url).searchParams.get("token");
-    if (!token || given !== token) return json({ error: "Missing or wrong x-pager-token" }, 401);
+    const svc = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const { data: setting } = await svc.from("app_settings").select("value").eq("key", "inbound_token").maybeSingle();
+    const valid = [Deno.env.get("INBOUND_TOKEN"), setting?.value].filter((t): t is string => !!t && t.length >= 16);
+    if (!given || !valid.includes(given)) return json({ error: "Missing or wrong x-pager-token" }, 401);
     const body = await req.json().catch(() => ({}));
     text = String(body.text ?? body.body ?? body.message ?? "");
     from = body.from ? String(body.from) : null;

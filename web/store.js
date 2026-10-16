@@ -6,7 +6,7 @@
 //          remove(table, match), notify(pageIds), onChange(cb), plus auth helpers.
 
 const TABLES = ['divisions', 'team_members', 'member_divisions', 'markets', 'dealers',
-  'visits', 'walkthroughs', 'pages', 'notification_log', 'inbound_messages'];
+  'visits', 'walkthroughs', 'pages', 'notification_log', 'inbound_messages', 'app_settings'];
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID()
   : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -72,6 +72,23 @@ export class DemoStore {
     if (log.length) await this.insert('notification_log', log);
     return { members: new Set(log.map(l => l.member_id)).size, sent: 0, demo: true };
   }
+  async completeSetup({ memberId, fullName, phone, divisionIds, smsConsent, consentText, notifyEmail }) {
+    const m = this.db.team_members.find(t => t.id === memberId);
+    const now = new Date().toISOString();
+    Object.assign(m, {
+      full_name: fullName || m.full_name, phone: phone || null, notify_sms: !!smsConsent, notify_email: notifyEmail !== false,
+      sms_consent_at: smsConsent ? now : null, sms_consent_text: smsConsent ? consentText : null, onboarded_at: now,
+    });
+    this.db.member_divisions = this.db.member_divisions.filter(l => l.member_id !== memberId)
+      .concat(divisionIds.map(division_id => ({ member_id: memberId, division_id })));
+    this.save(); this.emit();
+  }
+  async sendWelcome() { return { status: 'skipped', detail: 'Demo mode' }; }
+  functionUrl(name) { return `https://<your-project>.supabase.co/functions/v1/${name}`; }
+  async setSetting(key, value) {
+    this.db.app_settings = this.db.app_settings.filter(r => r.key !== key).concat([{ key, value, updated_at: new Date().toISOString() }]);
+    this.save(); this.emit();
+  }
   reset() { this.db = seedDemo(); this.save(); this.emit(); }
 }
 
@@ -88,7 +105,9 @@ function seedDemo() {
   ];
   for (const [full_name, email, phone, divs, role] of people) {
     const id = uid();
-    db.team_members.push({ id, full_name, email, phone, role, notify_sms: true, notify_email: true, active: true, created_at: new Date().toISOString() });
+    const now = new Date().toISOString();
+    db.team_members.push({ id, full_name, email, phone, role, notify_sms: true, notify_email: true, active: true, created_at: now,
+      onboarded_at: now, sms_consent_at: now, sms_consent_text: 'Demo consent' });
     for (const d of divs) db.member_divisions.push({ member_id: id, division_id: db.divisions.find(x => x.name === d).id });
   }
   db.markets.push({ id: uid(), name: 'Demo Market', is_active: true, created_at: new Date().toISOString() });
@@ -107,6 +126,7 @@ export class SupabaseStore {
   constructor(url, anonKey) {
     if (!window.supabase) throw new Error('Supabase library failed to load');
     this.client = window.supabase.createClient(url, anonKey);
+    this.url = url.replace(/\/+$/, '');
   }
 
   async init() {
@@ -145,6 +165,7 @@ export class SupabaseStore {
       get(c.from('markets').select('*')),
       get(c.from('dealers').select('*')),
     ]);
+    const app_settings = await get(c.from('app_settings').select('*'));
     const active = markets.find(m => m.is_active);
     let visits = [], walkthroughs = [], pages = [], notification_log = [];
     const since = new Date(Date.now() - 48 * 3600e3).toISOString();
@@ -161,7 +182,7 @@ export class SupabaseStore {
         if (pageIds.length) notification_log = await get(c.from('notification_log').select('*').in('page_id', pageIds));
       }
     }
-    return { divisions, team_members, member_divisions, markets, dealers, visits, walkthroughs, pages, notification_log, inbound_messages };
+    return { divisions, team_members, member_divisions, markets, dealers, visits, walkthroughs, pages, notification_log, inbound_messages, app_settings };
   }
 
   async insert(table, rows) {
@@ -186,4 +207,23 @@ export class SupabaseStore {
     if (error) throw error;
     return data;
   }
+  async completeSetup({ fullName, phone, divisionIds, smsConsent, consentText, notifyEmail }) {
+    const { error } = await this.client.rpc('complete_setup', {
+      p_full_name: fullName, p_phone: phone, p_division_ids: divisionIds,
+      p_sms_consent: !!smsConsent, p_consent_text: consentText, p_notify_email: notifyEmail !== false,
+    });
+    if (error) throw error;
+    this.emit();
+  }
+  async sendWelcome() {
+    const { data, error } = await this.client.functions.invoke('page-team', { body: { welcome: true } });
+    if (error) throw error;
+    return data;
+  }
+  async setSetting(key, value) {
+    const { error } = await this.client.from('app_settings').upsert({ key, value, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    this.emit();
+  }
+  functionUrl(name) { return `${this.url}/functions/v1/${name}`; }
 }

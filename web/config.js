@@ -4,4 +4,7 @@
 window.MARKET_PAGER_CONFIG = {
   supabaseUrl: '',      // e.g. https://abcdefghijkl.supabase.co
   supabaseAnonKey: '',  // Project Settings → API → anon public key
+  // Shown in the text-alert consent each rep agrees to on first login.
+  businessName: 'Creative Connection by Christy, Inc.',
+  termsUrl: 'https://encmotion.com',
 };

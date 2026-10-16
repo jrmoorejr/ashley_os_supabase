@@ -48,7 +48,14 @@ To feel the paging: open two tabs. In tab 2, go to *Settings → Acting as* and 
 8. **Load the team.** In the app, go to *Team → Import CSV* and paste from Excel. Columns are `Name, Email, Cell, Divisions, Role`, with multiple divisions separated by `;`. See `web/sample-team.csv`. Phone numbers are normalized to +1 format automatically.
 9. **Start the market.** Go to *Settings → Start new market* (e.g. "Las Vegas Winter 2027"). Each market keeps its own log.
 
-On every rep's phone: sign in, tap **🔔 Enable alerts**, and add the page to the home screen.
+On every rep's phone: sign in. **First-login setup** walks each rep through:
+1. Confirming their name and cell.
+2. Picking their divisions.
+3. **Opting in to text alerts.** The box starts unchecked. The app stores the time and exact wording as carrier proof, and sends a confirmation text.
+4. Turning on sound alerts and adding the app to the home screen.
+5. Setting up the iPhone automation for market check-in texts.
+
+**Texts only go to reps who opted in themselves.** Reps who skip it still get pages on the board, in-app alerts, and email. Admins create the check-in password the iPhone automation uses in *Settings → Check-in texts*. Anyone can rerun setup from Settings.
 
 ## Check dealers in by text (automatic)
 

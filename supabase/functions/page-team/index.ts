@@ -1,6 +1,7 @@
 // page-team: texts and emails every active team member in the paged division(s).
 //
 // POST { page_ids: string[] }   (called by the web app with the user's session token)
+// POST { welcome: true }         sends the caller the opt-in confirmation text after first-login setup
 //
 // Secrets (supabase secrets set ...):
 //   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM   -> SMS (optional)
@@ -69,10 +70,23 @@ Deno.serve(async (req) => {
   const { data: isMember, error: memberErr } = await userClient.rpc("is_team_member");
   if (memberErr || !isMember) return json({ error: "Not on the team list" }, 403);
 
-  const { page_ids } = await req.json().catch(() => ({ page_ids: [] }));
-  if (!Array.isArray(page_ids) || page_ids.length === 0) return json({ error: "page_ids required" }, 400);
-
+  const { page_ids, welcome } = await req.json().catch(() => ({ page_ids: [] }));
   const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+  // Opt-in confirmation, sent once when a rep agrees to texts during first-login setup.
+  if (welcome) {
+    const { data: { user } } = await userClient.auth.getUser();
+    const { data: me } = await admin.from("team_members").select("id, phone, sms_consent_at")
+      .ilike("email", (user?.email ?? "").replace(/[\\%_]/g, "\\$&")).maybeSingle();
+    if (!me?.sms_consent_at || !me.phone) return json({ status: "skipped", detail: "No consent or no cell" });
+    const result = await sendSms(me.phone,
+      `Market Pager: You're signed up for showroom paging texts from ${Deno.env.get("PAGER_BUSINESS_NAME") ?? "Creative Connection by Christy, Inc."} during market. ` +
+      "Msg frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out.");
+    await admin.from("notification_log").insert({ member_id: me.id, channel: "sms", destination: me.phone, ...result, detail: `welcome: ${result.detail}` });
+    return json(result);
+  }
+
+  if (!Array.isArray(page_ids) || page_ids.length === 0) return json({ error: "page_ids required" }, 400);
 
   const { data: pages, error: pagesErr } = await admin
     .from("pages")
@@ -89,7 +103,7 @@ Deno.serve(async (req) => {
   const divisionIds = [...new Set(pages.map((p) => p.division_id))];
   const { data: links, error: linkErr } = await admin
     .from("member_divisions")
-    .select("division_id, member:team_members(id, full_name, email, phone, notify_sms, notify_email, active)")
+    .select("division_id, member:team_members(id, full_name, email, phone, notify_sms, notify_email, sms_consent_at, active)")
     .in("division_id", divisionIds);
   if (linkErr) return json({ error: linkErr.message }, 500);
 
@@ -119,9 +133,10 @@ Deno.serve(async (req) => {
     const text = `MARKET PAGE: ${dealer}${party} is ready for ${divisions}.${from}` + (appUrl ? ` ${appUrl}` : "");
 
     // Carriers require opt-out instructions on business texts; Twilio handles STOP/HELP replies itself.
-    const sms: Result = member.notify_sms && member.phone
+    // Texts only go to reps who opted in themselves during first-login setup.
+    const sms: Result = member.notify_sms && member.phone && member.sms_consent_at
       ? await sendSms(member.phone, `${text} Reply STOP to opt out.`)
-      : { status: "skipped", detail: member.phone ? "SMS off for member" : "No phone" };
+      : { status: "skipped", detail: !member.phone ? "No phone" : !member.sms_consent_at ? "Has not opted in to texts" : "SMS off for member" };
     const email: Result = member.notify_email && member.email
       ? await sendEmail(member.email, `Market page: ${dealer} → ${divisions}`, text)
       : { status: "skipped", detail: "Email off for member" };

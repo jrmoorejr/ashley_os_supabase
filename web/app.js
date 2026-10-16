@@ -83,6 +83,11 @@ const cfg = savedCfg || (fileCfg.supabaseUrl
   ? { mode: 'supabase', url: fileCfg.supabaseUrl, key: fileCfg.supabaseAnonKey }
   : { mode: 'demo' });
 
+const BUSINESS = fileCfg.businessName || 'Creative Connection by Christy, Inc.';
+const TERMS_URL = fileCfg.termsUrl || 'https://encmotion.com';
+// Exact wording each rep agrees to; stored with the time they agreed, as proof of opt-in.
+const CONSENT_TEXT = `I agree to receive Market Pager text alerts from ${BUSINESS} at the cell number above when a dealer is ready for my division during furniture market events. Message frequency varies. Msg & data rates may apply. Reply HELP for help, STOP to opt out. Agreeing is not required to use the app. SMS Terms and Privacy Policy: ${TERMS_URL.replace(/^https?:\/\//, '')}`;
+
 let store;
 try {
   store = cfg.mode === 'supabase' && cfg.url && cfg.key ? new SupabaseStore(cfg.url, cfg.key) : new DemoStore();
@@ -160,10 +165,15 @@ function statusOf(v) {
 let audioCtx = null;
 function enableAlerts() {
   try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch { /* no audio */ }
-  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(render);
+  // During setup, keep the half-filled form; just update the button.
+  const refresh = () => {
+    const b = $('#setup-form [data-action=alerts]');
+    if (b) b.textContent = '🔔 Alerts are on. Test the sound'; else render();
+  };
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(refresh);
   LS.set('mp-alerts', true);
   beep();
-  render();
+  refresh();
 }
 function beep() {
   if (!audioCtx) return;
@@ -328,6 +338,7 @@ function render() {
   if (!state.D) { app.innerHTML = `<div class="center muted">Loading…</div>`; return; }
   if (store.kind === 'supabase' && !state.session) { app.innerHTML = loginView(); return; }
   if (store.kind === 'supabase' && !state.me) { app.innerHTML = notMemberView(); return; }
+  if (state.me && (!state.me.onboarded_at || state.forceSetup)) { app.innerHTML = setupView(); return; }
 
   const pagesForMe = activeVisits().flatMap(v => openPages(v).filter(p => myDivs().includes(p.division_id)).map(p => ({ v, p })));
   const alertsOn = LS.get('mp-alerts', false) && audioCtx;
@@ -480,6 +491,82 @@ function dealerCard(v) {
     </article>`;
 }
 
+const setting = key => (D().app_settings || []).find(r => r.key === key)?.value || '';
+const newToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, c => ({ '+': 'x', '/': 'y', '=': '' }[c]));
+};
+
+function shortcutSteps() {
+  const token = setting('inbound_token');
+  const url = store.functionUrl('inbound-checkin');
+  return `
+    <ol class="steps small">
+      <li>Open <b>Shortcuts</b> → <b>Automation</b> → <b>+</b> → <b>Message</b>.</li>
+      <li><b>Sender</b> → Choose → <b>High Point/Las Vegas</b> (274-539). <b>Message Contains</b>: <code>Meet</code>.</li>
+      <li>Pick <b>Run Immediately</b>, turn off <i>Notify When Run</i>, tap <b>Next</b> → <b>New Blank Automation</b>.</li>
+      <li>Add <b>Get Contents of URL</b>. Paste this address:
+        <div class="copyrow"><code>${esc(url)}</code><button class="btn small ghost" type="button" data-action="copy" data-copy="${esc(url)}">Copy</button></div></li>
+      <li>Tap ▸ to show more. <b>Method</b>: POST. <b>Headers</b>: add <code>x-pager-token</code> with this value:
+        ${token
+          ? `<div class="copyrow"><code>${esc(token)}</code><button class="btn small ghost" type="button" data-action="copy" data-copy="${esc(token)}">Copy</button></div>`
+          : `<div class="warn-text">No check-in password yet. ${isAdmin() ? 'Create one in Settings → Check-in texts.' : 'Ask an admin to create one in Settings.'}</div>`}</li>
+      <li><b>Request Body</b>: JSON. Add a <i>Text</i> field named <code>text</code>, set it to <i>Shortcut Input</i>, tap it and choose <b>Content</b>. Tap <b>Done</b>.</li>
+    </ol>`;
+}
+
+// First login: confirm details, opt in (or not) to texts, set up this phone.
+function setupView() {
+  const m = state.me, mine = divsOfMember(m.id);
+  const first = (m.full_name || '').split(' ')[0];
+  return `
+    <div class="setup">
+      <header class="setup-head">
+        <div class="logo big" aria-hidden="true">📟</div>
+        <h1>Welcome${first ? `, ${esc(first)}` : ''}</h1>
+        <p class="muted">Set up Market Pager on this phone. It takes about two minutes.</p>
+      </header>
+      <form id="setup-form" class="form">
+        <section class="panel">
+          <h2><span class="num">1</span> You</h2>
+          <label>Your name<input name="full_name" id="su-name" value="${esc(m.full_name)}" required autocomplete="name"></label>
+          <label>Cell number<input name="phone" id="su-phone" type="tel" value="${esc(m.phone || '')}" placeholder="(252) 555-0100" autocomplete="tel"></label>
+          <p class="small muted">Signed in as ${esc(m.email)}</p>
+        </section>
+
+        <section class="panel">
+          <h2><span class="num">2</span> Divisions you cover</h2>
+          <p class="small muted">You'll be paged when a dealer is ready for these.</p>
+          <div class="pick">${D().divs.map(d => `<label class="pchip" style="--c:${esc(d.color)}"><input type="checkbox" name="div" value="${d.id}" ${mine.includes(d.id) ? 'checked' : ''}><span>${esc(d.name)}</span></label>`).join('')}</div>
+        </section>
+
+        <section class="panel">
+          <h2><span class="num">3</span> Text alerts</h2>
+          <label class="consent"><input type="checkbox" name="sms" id="su-sms" ${m.sms_consent_at ? 'checked' : ''}>
+            <span>${esc(CONSENT_TEXT)}</span></label>
+          <label class="toggle"><input type="checkbox" name="email" id="su-email" ${m.notify_email !== false ? 'checked' : ''}> Also email me pages</label>
+          <p class="small muted">Without texts you still get pages on the board and as an alert in the app while it's open.</p>
+        </section>
+
+        <section class="panel">
+          <h2><span class="num">4</span> This phone</h2>
+          <button class="btn" type="button" data-action="alerts">🔔 ${audioCtx ? 'Alerts are on. Test the sound' : 'Turn on sound alerts'}</button>
+          <p class="small"><b>Add to your home screen</b> so it opens like an app. iPhone: tap <b>Share</b> → <b>Add to Home Screen</b>. Android: tap <b>⋮</b> → <b>Add to Home screen</b>.</p>
+        </section>
+
+        <section class="panel">
+          <h2><span class="num">5</span> Market check-in texts <span class="muted small">(iPhone, optional)</span></h2>
+          <p class="small">When the market texts you “Meet … at Front Desk”, your iPhone can put the dealer on the board automatically. Set it up once:</p>
+          ${shortcutSteps()}
+          <p class="small muted">You can skip this now. The steps are also in Settings.</p>
+        </section>
+
+        <button class="btn primary big" type="submit">Finish setup</button>
+        ${state.forceSetup ? `<button class="btn ghost" type="button" data-action="cancel-setup">Cancel</button>` : ''}
+      </form>
+    </div>`;
+}
+
 function checkInView() {
   const dealers = [...D().dealers].sort((a, b) => a.name.localeCompare(b.name));
   return `
@@ -540,7 +627,7 @@ function teamView() {
             <td>${divsOfMember(m.id).map(id => `<span class="dchip cur sm" style="--c:${esc(D().div[id]?.color)}">${esc(divName(id))}</span>`).join(' ')}</td>
             <td>${m.phone ? `<a href="tel:${esc(m.phone)}">${esc(m.phone)}</a>` : '<span class="muted">—</span>'}</td>
             <td>${esc(m.email)}</td>
-            <td class="small">${[m.notify_sms && 'SMS', m.notify_email && 'Email'].filter(Boolean).join(' + ') || 'Off'}</td>
+            <td class="small">${m.sms_consent_at && m.notify_sms ? `Texts ✓` : `<span class="muted">${m.onboarded_at ? 'No texts' : 'Not set up yet'}</span>`}${m.notify_email ? ' · Email' : ''}</td>
             ${admin ? `<td><button class="btn small ghost" data-action="member" data-id="${m.id}">Edit</button></td>` : ''}
           </tr>`).join('')}</tbody>
       </table></div>
@@ -625,7 +712,13 @@ function settingsView() {
         <label class="field">Acting as (demo)
           <select id="act-as">${D().team_members.map(m => `<option value="${m.id}" ${state.me?.id === m.id ? 'selected' : ''}>${esc(m.full_name)}</option>`).join('')}</select></label>`
       : `<p>Signed in as <b>${esc(state.session?.user?.email)}</b></p><button class="btn ghost" data-action="signout">Sign out</button>`}
+      <button class="btn ghost small" data-action="redo-setup">Run first-login setup again</button>
       <p class="small muted">Alerts: ${audioCtx ? 'sound on' : 'tap “Enable alerts” at the top so this phone beeps when your division is paged'}${'Notification' in window ? ` · system notifications ${Notification.permission}` : ''}.</p>
+
+      <h2>Check-in texts</h2>
+      <p class="small">Each rep's iPhone sends the market's check-in texts to the app. ${isAdmin() ? 'The password below goes in every rep\'s Shortcut. Create a new one if it leaks, then have reps update their Shortcut.' : ''}</p>
+      ${isAdmin() ? `<div class="row-actions"><button class="btn small ${setting('inbound_token') ? 'ghost' : ''}" data-action="new-token">${setting('inbound_token') ? 'Create new password' : 'Create check-in password'}</button></div>` : ''}
+      ${shortcutSteps()}
 
       <h2>Connection</h2>
       <form id="conn-form" class="form">
@@ -811,7 +904,7 @@ function memberModal(id) {
       <fieldset><legend>Divisions they get paged for</legend>
         <div class="pick">${D().divs.map(d => `<label class="pchip" style="--c:${esc(d.color)}"><input type="checkbox" name="div" value="${d.id}" ${divs.includes(d.id) ? 'checked' : ''}><span>${esc(d.name)}</span></label>`).join('')}</div></fieldset>
       <div class="grid3">
-        <label class="toggle"><input type="checkbox" name="notify_sms" ${m.notify_sms ? 'checked' : ''}> Text</label>
+        <label class="toggle" title="Texts also need the rep's own opt-in at first login"><input type="checkbox" name="notify_sms" ${m.notify_sms ? 'checked' : ''}> Text${m.sms_consent_at ? '' : ' <span class="muted small">(needs their opt-in)</span>'}</label>
         <label class="toggle"><input type="checkbox" name="notify_email" ${m.notify_email ? 'checked' : ''}> Email</label>
         <label class="toggle"><input type="checkbox" name="active" ${m.active ? 'checked' : ''}> Active</label>
       </div>
@@ -944,6 +1037,22 @@ document.addEventListener('click', async e => {
     case 'delete-member':
       confirmModal('Remove this team member? To keep their history, uncheck Active instead.', 'Remove', () => run(() => store.remove('team_members', { id: el.dataset.id }), 'Removed')); return;
     case 'import': importModal(); return;
+    case 'copy': {
+      const text = el.dataset.copy;
+      try { await navigator.clipboard.writeText(text); toast('Copied'); }
+      catch {
+        const code = el.previousElementSibling;
+        const r = document.createRange(); r.selectNodeContents(code);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        toast('Selected. Tap Copy', 'warn');
+      }
+      return;
+    }
+    case 'new-token':
+      await run(() => store.setSetting('inbound_token', newToken()), 'New check-in password created. Reps need to update their Shortcut');
+      return;
+    case 'redo-setup': state.forceSetup = true; render(); window.scrollTo(0, 0); return;
+    case 'cancel-setup': state.forceSetup = false; render(); return;
     case 'ignore-msg':
       await run(() => store.update('inbound_messages', el.dataset.msg, { status: 'ignored', handled_by: state.me?.id || null, handled_at: nowIso() }), 'Ignored');
       return;
@@ -1011,6 +1120,28 @@ document.addEventListener('input', e => {
 
 document.addEventListener('submit', async e => {
   const f = e.target;
+  if (f.id === 'setup-form') {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const smsConsent = !!fd.get('sms');
+    const phone = normalizePhone(fd.get('phone'));
+    if (smsConsent && !phone) { toast('Add your full cell number to get text alerts', 'warn'); $('#su-phone').focus(); return; }
+    const ok = await run(async () => {
+      await store.completeSetup({
+        memberId: state.me.id, fullName: fd.get('full_name').trim(), phone, divisionIds: fd.getAll('div'),
+        smsConsent, consentText: CONSENT_TEXT, notifyEmail: !!fd.get('email'),
+      });
+      if (smsConsent) { try { await store.sendWelcome(); } catch (err) { console.warn('welcome text', err); } }
+      return true;
+    });
+    if (ok) {
+      state.forceSetup = false;
+      state.view = 'floor'; LS.set('mp-view', 'floor');
+      await reload(); render();
+      toast(smsConsent ? "You're set up. A confirmation text is on its way" : "You're set up");
+    }
+    return;
+  }
   if (f.classList.contains('inbox-row')) {
     e.preventDefault();
     const msg = D().inbound_messages.find(m => m.id === f.dataset.msg);
@@ -1110,7 +1241,7 @@ async function reload() {
   const a = document.activeElement;
   const typing = a && $('#view')?.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'search';
   const dirtyForm = state.view === 'checkin' && $('#checkin-form') && [...new FormData($('#checkin-form')).values()].some(Boolean);
-  if (!typing && !dirtyForm) render();
+  if (!typing && !dirtyForm && !$('#setup-form')) render();
 }
 const emptyData = () => ({ divisions: [], team_members: [], member_divisions: [], markets: [], dealers: [], visits: [], walkthroughs: [], pages: [], notification_log: [], inbound_messages: [] });
 

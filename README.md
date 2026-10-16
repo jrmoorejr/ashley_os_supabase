@@ -88,7 +88,8 @@ The function's address is `https://<your-project>.supabase.co/functions/v1/inbou
 
    Opt-in confirmations and similar texts are skipped. The *Mine* filter on the Floor shows dealers who asked for you.
 3. **Auto-forward from Android.** Use an SMS-forwarding app such as MacroDroid, Tasker, or SMS Forwarder. Have it post the same JSON to the same address with the same header, or forward the text to the Twilio number.
-4. **By hand.** Long-press the text, tap Forward, and send it to the app's number. Team members' cell numbers are trusted automatically. Or paste the text into the box at the top of *Check in*, which fills in the form for you.
+4. **By hand, with the form filled for you.** Copy the market text in Messages, open the app's *Check in* tab, and tap **📋 Paste text**. Dealer, buyer, who they asked for, and where they're waiting all fill in instantly, and you tap **Check in**. If the dealer is already on the floor, the app tells you. You can also long-press the text and forward it to the app's number; team members' cell numbers are trusted automatically.
+5. **Review before checking in.** If you'd rather glance at each one first, build the iPhone automation from option 2 with a different action: in place of *Get Contents of URL*, use **Open URLs** with `https://<your-app-address>/?text=` followed by *Shortcut Input → Content*. Each market text opens the app on *Check in* with the form already filled. This works on the hosted app only, not the Claude demo link.
 
 **Rules the app follows:**
 - A dealer it already knows (by name or account number) is always matched.

@@ -204,7 +204,7 @@ async function run(fn, okMsg) {
   catch (e) { console.error(e); toast(e.message || String(e), 'err'); }
 }
 
-async function checkIn({ name, account, city, st, party, notes, pageDivs = [], source = 'app', requestedRep = null, location = null }) {
+async function checkIn({ name, account, city, st, party, notes, pageDivs = [], source = 'app', requestedRep = null, requestedRepId = null, location = null }) {
   const existing = D().dealers.find(d => d.name.trim().toLowerCase() === name.trim().toLowerCase());
   let dealer = existing;
   if (!dealer) [dealer] = await store.insert('dealers', { name: name.trim(), account_number: account || null, city: city || null, state: st || null, created_at: nowIso() });
@@ -214,8 +214,8 @@ async function checkIn({ name, account, city, st, party, notes, pageDivs = [], s
   const [visit] = await store.insert('visits', {
     market_id: D().market.id, dealer_id: dealer.id, party: party || null, notes: notes || null,
     checked_in_at: nowIso(), checked_in_by: state.me?.id || null, source,
-    ...(requestedRep || location ? {
-      requested_rep_id: matchMember(requestedRep, D().team_members)?.id || null,
+    ...(requestedRep || requestedRepId || location ? {
+      requested_rep_id: requestedRepId || matchMember(requestedRep, D().team_members)?.id || null,
       requested_rep_name: requestedRep, meet_location: location,
     } : {}),
   });
@@ -276,6 +276,28 @@ async function checkInFromText(msg, name, party) {
   return visit;
 }
 
+// Fill the check-in form from a pasted or forwarded text.
+function fillFromText(text) {
+  const f = $('#checkin-form'), out = $('#paste-result');
+  if (!f || !out) return;
+  if (!String(text || '').trim()) { out.innerHTML = '<span class="muted">The form below fills in as soon as you paste.</span>'; return; }
+  const r = parseCheckin(text, D().dealers);
+  if (r.ignore) { out.innerHTML = '<span class="warn-text">That text isn\'t a check-in (opt-in or similar).</span>'; return; }
+  if (!r.dealer) { out.innerHTML = '<span class="warn-text">Couldn\'t find a dealer name in that text. Type it in below.</span>'; f.name.focus(); return; }
+  const rep = matchMember(r.requestedRep, D().team_members);
+  f.name.value = r.dealer;
+  f.party.value = r.party || '';
+  f.account.value = r.account || '';
+  f.asked.value = rep?.id || '';
+  f.asked_name.value = r.requestedRep || '';
+  f.location.value = r.location || '';
+  f.source.value = 'text';
+  const here = D().visits.find(v => !v.checked_out_at && dealerOf(v).name.toLowerCase() === r.dealer.toLowerCase());
+  out.innerHTML = here
+    ? `<span class="warn-text">${esc(r.dealer)} is already on the floor (checked in at ${clock(here.checked_in_at)}).</span>`
+    : `<span class="ok-text">✓ Filled in <b>${esc(r.dealer)}</b> ${r.dealerId ? '(returning dealer)' : '(new dealer)'}${r.requestedRep && !rep ? ` · “${esc(r.requestedRep)}” isn't on the team list` : ''}.</span> Check it, then tap <b>Check in</b>.`;
+}
+
 // Demo only: what the inbound-checkin Edge Function does when a text arrives.
 async function simulateIncomingText(body) {
   const parsed = parseCheckin(body, D().dealers);
@@ -322,6 +344,18 @@ function render() {
     </header>
     <nav class="tabs">${NAV.map(([k, l]) => `<button class="tab ${state.view === k ? 'on' : ''}" data-action="nav" data-view="${k}">${l}${k === 'floor' && (pagesForMe.length + inboxItems().length) ? ` <span class="dot">${pagesForMe.length + inboxItems().length}</span>` : ''}</button>`).join('')}</nav>
     <main id="view">${viewHtml()}</main>`;
+  if (state.view === 'checkin') applyPendingText();
+}
+
+// A link like  ?text=J.R.%20MOORE%20–%20Meet…  opens Check in with the form filled
+// (used by an iPhone Shortcut, or a link shared from Messages).
+function applyPendingText() {
+  let t = null;
+  try { t = sessionStorage.getItem('mp-pending-text'); } catch { /* ignore */ }
+  if (!t || !$('#paste-text')) return;
+  try { sessionStorage.removeItem('mp-pending-text'); } catch { /* ignore */ }
+  $('#paste-text').value = t;
+  fillFromText(t);
 }
 
 function viewHtml() {
@@ -451,25 +485,31 @@ function checkInView() {
   return `
     <section class="panel narrow">
       <h2>Check in a dealer</h2>
-      <details class="paste" ${store.kind === 'demo' ? 'open' : ''}>
-        <summary>📱 Got a check-in text? Paste it here</summary>
-        <textarea id="paste-text" rows="3" placeholder="e.g. J.R. MOORE – Meet SHELBY SARI from FURNITURELAND SOUTH at Front Desk"></textarea>
-        <div class="row-actions">
-          <button class="btn small" type="button" data-action="paste-fill">Fill in the form</button>
-          ${store.kind === 'demo' ? `<button class="btn small ghost" type="button" data-action="simulate-text">Simulate it arriving by text</button>` : ''}
+      <div class="paste">
+        <div class="paste-head">
+          <label for="paste-text">📱 Market check-in text</label>
+          <button class="btn small" type="button" data-action="paste-clip">📋 Paste text</button>
         </div>
-        <p class="small muted">To skip this step, forward the texts to the app's number or set up auto-forwarding. The README covers both.</p>
-      </details>
+        <textarea id="paste-text" rows="3" placeholder="Paste the market's text, e.g. J.R. MOORE – Meet SHELBY SARI from FURNITURELAND SOUTH at Front Desk"></textarea>
+        <div id="paste-result" class="small" aria-live="polite"><span class="muted">The form below fills in as soon as you paste.</span></div>
+        ${store.kind === 'demo' ? `<div class="row-actions"><button class="btn small ghost" type="button" data-action="simulate-text">Simulate it arriving by text (auto check-in)</button></div>` : ''}
+      </div>
       <form id="checkin-form" class="form">
-        <label>Dealer name<input name="name" list="dealer-list" required autocomplete="off" placeholder="Start typing — returning dealers autofill"></label>
+        <label>Dealer name<input name="name" id="ci-name" list="dealer-list" required autocomplete="off" placeholder="Start typing — returning dealers autofill"></label>
         <datalist id="dealer-list">${dealers.map(d => `<option value="${esc(d.name)}">`).join('')}</datalist>
         <div class="grid3">
-          <label>Account #<input name="account" autocomplete="off"></label>
-          <label>City<input name="city" autocomplete="off"></label>
-          <label>State<input name="st" maxlength="2" autocomplete="off"></label>
+          <label>Account #<input name="account" id="ci-account" autocomplete="off"></label>
+          <label>City<input name="city" id="ci-city" autocomplete="off"></label>
+          <label>State<input name="st" id="ci-st" maxlength="2" autocomplete="off"></label>
         </div>
-        <label>Who's with them<input name="party" placeholder="e.g. Owner + 2 buyers" autocomplete="off"></label>
-        <label>Notes<textarea name="notes" rows="2" placeholder="Priorities, open-to-buy, programs to show…"></textarea></label>
+        <label>Who's with them<input name="party" id="ci-party" placeholder="e.g. Owner + 2 buyers" autocomplete="off"></label>
+        <div class="grid2">
+          <label>Asked for<select name="asked" id="ci-asked"><option value="">No one in particular</option>${[...D().team_members].filter(m => m.active).sort((a, b) => a.full_name.localeCompare(b.full_name)).map(m => `<option value="${m.id}">${esc(m.full_name)}</option>`).join('')}</select></label>
+          <label>Waiting at<input name="location" id="ci-location" placeholder="e.g. Front Desk" autocomplete="off"></label>
+        </div>
+        <input type="hidden" name="asked_name" id="ci-asked-name">
+        <input type="hidden" name="source" id="ci-source" value="app">
+        <label>Notes<textarea name="notes" id="ci-notes" rows="2" placeholder="Priorities, open-to-buy, programs to show…"></textarea></label>
         <fieldset>
           <legend>Page a division now? <span class="muted">(optional)</span></legend>
           <div class="pick">${D().divs.map(d => `<label class="pchip" style="--c:${esc(d.color)}"><input type="checkbox" name="div" value="${d.id}"><span>${esc(d.name)}</span></label>`).join('')}</div>
@@ -907,16 +947,16 @@ document.addEventListener('click', async e => {
     case 'ignore-msg':
       await run(() => store.update('inbound_messages', el.dataset.msg, { status: 'ignored', handled_by: state.me?.id || null, handled_at: nowIso() }), 'Ignored');
       return;
-    case 'paste-fill': {
-      const text = $('#paste-text').value;
-      const r = parseCheckin(text, D().dealers);
-      const f = $('#checkin-form');
-      if (!r.dealer) { toast("Couldn't find a dealer name in that text. Type it in below.", 'warn'); return; }
-      f.name.value = r.dealer;
-      if (r.party) f.party.value = r.party;
-      if (r.account) f.account.value = r.account;
-      toast(r.confidence === 'high' ? `Matched ${r.dealer}` : `Filled in ${r.dealer}. Check it, then tap Check in`);
-      f.name.focus();
+    case 'paste-clip': {
+      try {
+        const t = await navigator.clipboard.readText();
+        if (!t.trim()) throw new Error('empty');
+        $('#paste-text').value = t;
+        fillFromText(t);
+      } catch {
+        $('#paste-text').focus();
+        toast('Long-press the box and tap Paste', 'warn');
+      }
       return;
     }
     case 'simulate-text': {
@@ -954,7 +994,13 @@ document.addEventListener('change', async e => {
   }
 });
 
+let fillTimer = null;
 document.addEventListener('input', e => {
+  if (e.target.id === 'paste-text') {
+    clearTimeout(fillTimer);
+    fillTimer = setTimeout(() => fillFromText(e.target.value), 120);
+    return;
+  }
   if (e.target.id === 'search') {
     state.search = e.target.value;
     const pos = e.target.selectionStart;
@@ -975,7 +1021,12 @@ document.addEventListener('submit', async e => {
   if (f.id === 'checkin-form') {
     e.preventDefault();
     const fd = new FormData(f);
-    const data = { name: fd.get('name'), account: fd.get('account'), city: fd.get('city'), st: (fd.get('st') || '').toUpperCase(), party: fd.get('party'), notes: fd.get('notes'), pageDivs: fd.getAll('div') };
+    const askedId = fd.get('asked') || null;
+    const data = {
+      name: fd.get('name'), account: fd.get('account'), city: fd.get('city'), st: (fd.get('st') || '').toUpperCase(),
+      party: fd.get('party'), notes: fd.get('notes'), pageDivs: fd.getAll('div'), source: fd.get('source') || 'app',
+      requestedRepId: askedId, requestedRep: askedId ? memName(askedId) : (fd.get('asked_name') || null), location: fd.get('location') || null,
+    };
     const visit = await run(() => checkIn(data));
     if (visit) { toast(`${data.name} is checked in`); state.view = 'floor'; LS.set('mp-view', 'floor'); render(); }
   }
@@ -1066,6 +1117,12 @@ const emptyData = () => ({ divisions: [], team_members: [], member_divisions: []
 setInterval(() => $$('.timer.live').forEach(el => { el.textContent = dur(el.dataset.since); }), 1000);
 
 (async () => {
+  const incoming = new URLSearchParams(location.search).get('text');
+  if (incoming) {
+    try { sessionStorage.setItem('mp-pending-text', incoming); } catch { /* ignore */ }
+    state.view = 'checkin';
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
   render();
   await store.init();
   store.onChange(() => reload());

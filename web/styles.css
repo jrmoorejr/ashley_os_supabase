@@ -250,10 +250,12 @@ legend { font-size: .85rem; font-weight: 600; color: var(--muted); margin-bottom
 blockquote, .quote { margin: 0; padding: .5rem .75rem; border-left: 3px solid var(--otw); background: var(--surface); border-radius: 0 8px 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 blockquote cite { display: block; font-style: normal; font-size: .75rem; color: var(--muted); margin-top: .25rem; }
 .paste { background: var(--surface-2); border-radius: 10px; padding: .6rem .75rem; margin-bottom: 1rem; }
-.paste summary { cursor: pointer; font-weight: 600; }
-.paste[open] summary { margin-bottom: .5rem; }
-.paste textarea { margin-bottom: .5rem; }
-.paste p { margin: .5rem 0 0; }
-@media (max-width: 520px) { .inbox-fields { grid-template-columns: 1fr; } }
+.paste { display: flex; flex-direction: column; gap: .5rem; border: 1px dashed color-mix(in srgb, var(--otw) 50%, var(--line)); }
+.paste-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.paste-head label { color: var(--text); font-size: .95rem; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.ok-text { color: var(--with); }
+.warn-text { color: var(--paging); font-weight: 600; }
+@media (max-width: 520px) { .inbox-fields, .grid2 { grid-template-columns: 1fr; } }
 .asked { color: var(--otw); }
 .asked b { color: var(--text); }

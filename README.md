@@ -6,7 +6,7 @@ A pager board for market. Check a dealer in, track which division and rep they'r
 
 | On the floor | How it works |
 |---|---|
-| **Dealer arrives** | *Check in* tab. Returning dealers autofill. Optionally page a division right away. |
+| **Dealer arrives** | A check-in text puts them on the board automatically (see below). Or use the *Check in* tab, where returning dealers autofill and you can page a division right away. |
 | **Rep starts walking them** | **Start walk** → pick the division + rep → the division timer starts. |
 | **Division is done** | **✓ Finished** → "Where to next?" pops up. Multi-select Motion, Case Goods, Bedding, Stationary, Accents. Divisions they've already seen are **grayed out**. Then **📟 Page selected**. |
 | **Paged rep responds** | Gets a text + email, and the app beeps and vibrates on their phone. They tap **On my way**, then **Start walk** when they reach the dealer. |
@@ -50,6 +50,47 @@ To feel the paging: open two tabs. In tab 2, go to *Settings → Acting as* and 
 
 On every rep's phone: sign in, tap **🔔 Enable alerts**, and add the page to the home screen.
 
+## Check dealers in by text (automatic)
+
+If check-in alerts already arrive as text messages, the app can read them. A clear text ("Coastal Home has checked in with Mary and 2 buyers") puts the dealer on the board as **Here**, tagged *via text*, with no typing. An unclear text goes to a **review inbox** at the top of the Floor tab, where anyone can fix the name and tap Check in. A dealer who is already on the board is never added twice.
+
+**Set up the receiving end once:**
+```bash
+supabase db push   # or run supabase/migrations/20261016010000_text_checkin.sql in the SQL Editor
+supabase functions deploy inbound-checkin --no-verify-jwt
+supabase secrets set INBOUND_TOKEN=pick-a-long-random-password \
+  INBOUND_ALLOWED_FROM=+13365550000          # the number(s) the check-in texts come from
+```
+The function's address is `https://<your-project>.supabase.co/functions/v1/inbound-checkin`.
+
+**Then pick how the texts reach it.** Options are listed from most to least automatic.
+
+1. **Have the texts sent to the app's number.** This is the best option when the alerts come from a system or a front desk. In Twilio, open *Phone Numbers → your number → Messaging → "A message comes in"*, choose *Webhook, HTTP POST*, and paste the function address. Then ask whoever sends the check-in texts to add that number to their list. No phone is involved.
+2. **Auto-forward from an iPhone** (iOS 17 or later). Open the Shortcuts app and go to *Automation → + → Message*. Set *Sender* to whoever sends the check-ins (and optionally *Message Contains* "checked in"). Choose **Run Immediately**, then add the action **Get Contents of URL** with these settings:
+   - URL: the function address
+   - Method: POST
+   - Headers: `x-pager-token` = your INBOUND_TOKEN
+   - Request Body: JSON, key `text` = *Shortcut Input → Message*
+
+   The phone sends each matching text to the app in the background.
+3. **Auto-forward from Android.** Use an SMS-forwarding app such as MacroDroid, Tasker, or SMS Forwarder. Have it post the same JSON to the same address with the same header, or forward the text to the Twilio number.
+4. **By hand.** Long-press the text, tap Forward, and send it to the app's number. Team members' cell numbers are trusted automatically. Or paste the text into the box at the top of *Check in*, which fills in the form for you.
+
+**Rules the app follows:**
+- A dealer it already knows (by name or account number) is always matched.
+- A new name is checked in when the text clearly says so ("X checked in", "X is here", "X arrived", "Dealer: X").
+- Texts from numbers that aren't on the team list or `INBOUND_ALLOWED_FROM` always go to the review inbox.
+- `INBOUND_AUTO_CHECKIN=false` sends every text to the inbox.
+- `INBOUND_SMS_REPLY=false` stops the confirmation reply ("Checked in: Coastal Home").
+
+Test it without a phone:
+```bash
+curl -X POST https://<your-project>.supabase.co/functions/v1/inbound-checkin \
+  -H "x-pager-token: <INBOUND_TOKEN>" -H "content-type: application/json" \
+  -d '{"text":"Coastal Home has checked in with Mary Jones"}'
+```
+The parser is tuned for common wording. Send a few real check-in texts through it (with phone numbers removed) and adjust `supabase/functions/_shared/checkin-parser.js` to match. `node tests/parser.test.mjs` checks the parser against the sample texts.
+
 ## Access rules
 
 - Only emails on the team list (and marked active) can see or change anything.
@@ -62,6 +103,8 @@ On every rep's phone: sign in, tap **🔔 Enable alerts**, and add the page to t
 ```
 supabase/migrations/…_market_pager.sql   tables, row-level security, realtime, walkthrough_log view
 supabase/functions/page-team/index.ts    sends the SMS + email for a page, logs results
+supabase/functions/inbound-checkin/      receives check-in texts and puts dealers on the board
+supabase/functions/_shared/checkin-parser.js  reads dealer / party / account out of a text (copied to web/)
 web/index.html, app.js, store.js, styles.css, config.js   the app (no build step)
 web/sample-team.csv                       team import template
 ```

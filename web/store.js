@@ -6,7 +6,7 @@
 //          remove(table, match), notify(pageIds), onChange(cb), plus auth helpers.
 
 const TABLES = ['divisions', 'team_members', 'member_divisions', 'markets', 'dealers',
-  'visits', 'walkthroughs', 'pages', 'notification_log'];
+  'visits', 'walkthroughs', 'pages', 'notification_log', 'inbound_messages'];
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID()
   : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -28,6 +28,7 @@ export class DemoStore {
     let db = null;
     try { db = JSON.parse(localStorage.getItem(this.key) || 'null'); } catch { /* storage blocked */ }
     this.db = db || seedDemo();
+    for (const t of TABLES) this.db[t] = this.db[t] || [];  // older demo data
     this.save();
     // Keep multiple tabs of the demo in sync.
     window.addEventListener('storage', e => {
@@ -91,6 +92,10 @@ function seedDemo() {
     for (const d of divs) db.member_divisions.push({ member_id: id, division_id: db.divisions.find(x => x.name === d).id });
   }
   db.markets.push({ id: uid(), name: 'Demo Market', is_active: true, created_at: new Date().toISOString() });
+  // A text the app couldn't read on its own, so the review inbox has something in it.
+  db.inbound_messages.push({ id: uid(), received_at: new Date().toISOString(), channel: 'sms', from_number: '+13365550188',
+    body: 'Heads up, the owner from Riverside Home Center is at reception asking for Bedding', parsed_dealer: null,
+    parsed_party: null, parsed_account: null, confidence: 'low', status: 'pending' });
   return db;
 }
 
@@ -142,6 +147,8 @@ export class SupabaseStore {
     ]);
     const active = markets.find(m => m.is_active);
     let visits = [], walkthroughs = [], pages = [], notification_log = [];
+    const since = new Date(Date.now() - 48 * 3600e3).toISOString();
+    const inbound_messages = await get(c.from('inbound_messages').select('*').gte('received_at', since).order('received_at', { ascending: false }));
     if (active) {
       visits = await get(c.from('visits').select('*').eq('market_id', active.id));
       const ids = visits.map(v => v.id);
@@ -154,7 +161,7 @@ export class SupabaseStore {
         if (pageIds.length) notification_log = await get(c.from('notification_log').select('*').in('page_id', pageIds));
       }
     }
-    return { divisions, team_members, member_divisions, markets, dealers, visits, walkthroughs, pages, notification_log };
+    return { divisions, team_members, member_divisions, markets, dealers, visits, walkthroughs, pages, notification_log, inbound_messages };
   }
 
   async insert(table, rows) {

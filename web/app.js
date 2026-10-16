@@ -1,4 +1,5 @@
 import { DemoStore, SupabaseStore } from './store.js';
+import { parseCheckin } from './checkin-parser.js';
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -203,7 +204,7 @@ async function run(fn, okMsg) {
   catch (e) { console.error(e); toast(e.message || String(e), 'err'); }
 }
 
-async function checkIn({ name, account, city, st, party, notes, pageDivs }) {
+async function checkIn({ name, account, city, st, party, notes, pageDivs = [], source = 'app' }) {
   const existing = D().dealers.find(d => d.name.trim().toLowerCase() === name.trim().toLowerCase());
   let dealer = existing;
   if (!dealer) [dealer] = await store.insert('dealers', { name: name.trim(), account_number: account || null, city: city || null, state: st || null, created_at: nowIso() });
@@ -212,7 +213,7 @@ async function checkIn({ name, account, city, st, party, notes, pageDivs }) {
   if (already) throw new Error(`${dealer.name} is already checked in`);
   const [visit] = await store.insert('visits', {
     market_id: D().market.id, dealer_id: dealer.id, party: party || null, notes: notes || null,
-    checked_in_at: nowIso(), checked_in_by: state.me?.id || null,
+    checked_in_at: nowIso(), checked_in_by: state.me?.id || null, source,
   });
   await reload();
   if (pageDivs.length) await pageDivisions(visit, pageDivs);
@@ -259,6 +260,34 @@ async function checkOut(visit) {
   await store.update('visits', visit.id, { checked_out_at: t });
 }
 
+// Texts waiting for a person to confirm (sender not trusted, or no dealer name found).
+const inboxItems = () => (D().inbound_messages || [])
+  .filter(m => m.status === 'pending' && Date.now() - ts(m.received_at) < 24 * 3600e3)
+  .sort(byTime('received_at'));
+
+async function checkInFromText(msg, name, party) {
+  const parsed = parseCheckin(msg.body, D().dealers);
+  const visit = await checkIn({ name, party, account: parsed.account, notes: null, source: 'text' });
+  await store.update('inbound_messages', msg.id, { status: 'checked_in', visit_id: visit.id, handled_by: state.me?.id || null, handled_at: nowIso() });
+  return visit;
+}
+
+// Demo only: what the inbound-checkin Edge Function does when a text arrives.
+async function simulateIncomingText(body) {
+  const parsed = parseCheckin(body, D().dealers);
+  const [msg] = await store.insert('inbound_messages', {
+    received_at: nowIso(), channel: 'sms', from_number: '+13365550188', body,
+    parsed_dealer: parsed.dealer, parsed_party: parsed.party, parsed_account: parsed.account,
+    confidence: parsed.confidence, status: 'pending',
+  });
+  if (!parsed.dealer || parsed.confidence === 'low') return { status: 'pending' };
+  const open = D().visits.find(v => !v.checked_out_at && dealerOf(v).name.toLowerCase() === parsed.dealer.toLowerCase());
+  if (open) { await store.update('inbound_messages', msg.id, { status: 'duplicate', visit_id: open.id }); return { status: 'duplicate', dealer: parsed.dealer }; }
+  await reload();
+  await checkInFromText(D().inbound_messages.find(m => m.id === msg.id) || msg, parsed.dealer, parsed.party);
+  return { status: 'checked_in', dealer: parsed.dealer };
+}
+
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
@@ -283,7 +312,7 @@ function render() {
         <span class="who">${esc(state.me?.full_name || 'Guest')}</span>
       </div>
     </header>
-    <nav class="tabs">${NAV.map(([k, l]) => `<button class="tab ${state.view === k ? 'on' : ''}" data-action="nav" data-view="${k}">${l}${k === 'floor' && pagesForMe.length ? ` <span class="dot">${pagesForMe.length}</span>` : ''}</button>`).join('')}</nav>
+    <nav class="tabs">${NAV.map(([k, l]) => `<button class="tab ${state.view === k ? 'on' : ''}" data-action="nav" data-view="${k}">${l}${k === 'floor' && (pagesForMe.length + inboxItems().length) ? ` <span class="dot">${pagesForMe.length + inboxItems().length}</span>` : ''}</button>`).join('')}</nav>
     <main id="view">${viewHtml()}</main>`;
 }
 
@@ -324,6 +353,25 @@ function floorView() {
         </div>`).join('')}
     </section>` : '';
 
+  const inbox = inboxItems();
+  const inboxBanner = inbox.length ? `
+    <section class="inbox-banner">
+      <h3>📱 Check-in texts to review <span class="muted small">— the app couldn't confirm these on its own</span></h3>
+      ${inbox.map(m => `
+        <form class="inbox-row" data-msg="${m.id}">
+          <blockquote>${esc(m.body)}<cite>${esc(m.from_number || m.channel)} · ${clock(m.received_at)}</cite></blockquote>
+          <div class="inbox-fields">
+            <input name="dealer" id="ib-d-${m.id}" placeholder="Dealer name" value="${esc(m.parsed_dealer || '')}" list="dealer-list-ib" required aria-label="Dealer name">
+            <input name="party" id="ib-p-${m.id}" placeholder="Who's with them" value="${esc(m.parsed_party || '')}" aria-label="Who's with them">
+          </div>
+          <div class="row-actions">
+            <button class="btn small primary" type="submit">Check in</button>
+            <button class="btn small ghost" type="button" data-action="ignore-msg" data-msg="${m.id}">Ignore</button>
+          </div>
+        </form>`).join('')}
+      <datalist id="dealer-list-ib">${D().dealers.map(d => `<option value="${esc(d.name)}">`).join('')}</datalist>
+    </section>` : '';
+
   let list = here;
   if (state.filter !== 'all') list = list.filter(v => statusOf(v).k === state.filter);
   if (state.mineOnly) list = list.filter(v => {
@@ -335,6 +383,7 @@ function floorView() {
   const chip = (k, label, n) => `<button class="fchip ${state.filter === k ? 'on' : ''} s-${k}" data-action="filter" data-filter="${k}">${label} <b>${n}</b></button>`;
   return `
     ${pagesBanner}
+    ${inboxBanner}
     <div class="filters">
       ${chip('all', 'Here', here.length)}${chip('with', 'Walking', counts.with)}${chip('paging', 'Paging', counts.paging)}${chip('otw', 'On the way', counts.otw)}${chip('waiting', 'Waiting', counts.waiting)}
     </div>
@@ -366,7 +415,7 @@ function dealerCard(v) {
     <article class="card st-${s.k}">
       <div class="card-top">
         <div>
-          <h3>${esc(dealer.name)}</h3>
+          <h3>${esc(dealer.name)}${v.source === 'text' ? ' <span class="tag" title="Checked in from a text message">via text</span>' : ''}</h3>
           <div class="muted small">${[dealer.account_number && '#' + esc(dealer.account_number), v.party && esc(v.party), 'In at ' + clock(v.checked_in_at)].filter(Boolean).join(' · ')}</div>
         </div>
         <div class="total" title="Total time in showroom">${timer(v.checked_in_at)}<span>in showroom</span></div>
@@ -393,6 +442,15 @@ function checkInView() {
   return `
     <section class="panel narrow">
       <h2>Check in a dealer</h2>
+      <details class="paste" ${store.kind === 'demo' ? 'open' : ''}>
+        <summary>📱 Got a check-in text? Paste it here</summary>
+        <textarea id="paste-text" rows="3" placeholder="e.g. Coastal Home has checked in with Mary Jones and 2 buyers"></textarea>
+        <div class="row-actions">
+          <button class="btn small" type="button" data-action="paste-fill">Fill in the form</button>
+          ${store.kind === 'demo' ? `<button class="btn small ghost" type="button" data-action="simulate-text">Simulate it arriving by text</button>` : ''}
+        </div>
+        <p class="small muted">To skip this step, forward the texts to the app's number or set up auto-forwarding. The README covers both.</p>
+      </details>
       <form id="checkin-form" class="form">
         <label>Dealer name<input name="name" list="dealer-list" required autocomplete="off" placeholder="Start typing — returning dealers autofill"></label>
         <datalist id="dealer-list">${dealers.map(d => `<option value="${esc(d.name)}">`).join('')}</datalist>
@@ -669,7 +727,7 @@ function startModal(v, presetDiv, presetRep) {
 function moreModal(v) {
   openModal(`
     <h2>${esc(dealerOf(v).name)}</h2>
-    ${v.notes ? `<p class="note">${esc(v.notes)}</p>` : ''}
+    ${(D().inbound_messages || []).filter(m => m.visit_id === v.id).map(m => `<blockquote class="quote">${esc(m.body)}<cite>Check-in text · ${clock(m.received_at)}</cite></blockquote>`).join('')}
     <form id="edit-visit" class="form">
       <label>Who's with them<input name="party" value="${esc(v.party || '')}"></label>
       <label>Notes<textarea name="notes" rows="3">${esc(v.notes || '')}</textarea></label>
@@ -836,6 +894,30 @@ document.addEventListener('click', async e => {
     case 'delete-member':
       confirmModal('Remove this team member? To keep their history, uncheck Active instead.', 'Remove', () => run(() => store.remove('team_members', { id: el.dataset.id }), 'Removed')); return;
     case 'import': importModal(); return;
+    case 'ignore-msg':
+      await run(() => store.update('inbound_messages', el.dataset.msg, { status: 'ignored', handled_by: state.me?.id || null, handled_at: nowIso() }), 'Ignored');
+      return;
+    case 'paste-fill': {
+      const text = $('#paste-text').value;
+      const r = parseCheckin(text, D().dealers);
+      const f = $('#checkin-form');
+      if (!r.dealer) { toast("Couldn't find a dealer name in that text. Type it in below.", 'warn'); return; }
+      f.name.value = r.dealer;
+      if (r.party) f.party.value = r.party;
+      if (r.account) f.account.value = r.account;
+      toast(r.confidence === 'high' ? `Matched ${r.dealer}` : `Filled in ${r.dealer}. Check it, then tap Check in`);
+      f.name.focus();
+      return;
+    }
+    case 'simulate-text': {
+      const text = $('#paste-text').value.trim();
+      if (!text) { toast('Paste or type a text first', 'warn'); return; }
+      const r = await run(() => simulateIncomingText(text));
+      if (!r) return;
+      toast(r.status === 'checked_in' ? `Text received. ${r.dealer} checked in` : r.status === 'duplicate' ? `${r.dealer} is already here` : 'Text received. Sent to the review inbox on Floor');
+      state.view = 'floor'; LS.set('mp-view', 'floor'); render();
+      return;
+    }
     case 'template': csvModal('market-pager-team-template.csv', 'Name,Email,Cell,Divisions,Role\nJordan Moore,jordan@company.com,336-555-0101,Motion,admin\nAvery Lee,avery@company.com,336-555-0102,Motion; Stationary,rep\n'); return;
     case 'export': {
       const rows = logRows();
@@ -873,6 +955,13 @@ document.addEventListener('input', e => {
 
 document.addEventListener('submit', async e => {
   const f = e.target;
+  if (f.classList.contains('inbox-row')) {
+    e.preventDefault();
+    const msg = D().inbound_messages.find(m => m.id === f.dataset.msg);
+    const name = f.dealer.value.trim(), party = f.party.value.trim();
+    if (msg && name) await run(() => checkInFromText(msg, name, party), `${name} checked in`);
+    return;
+  }
   if (f.id === 'checkin-form') {
     e.preventDefault();
     const fd = new FormData(f);
@@ -962,7 +1051,7 @@ async function reload() {
   const dirtyForm = state.view === 'checkin' && $('#checkin-form') && [...new FormData($('#checkin-form')).values()].some(Boolean);
   if (!typing && !dirtyForm) render();
 }
-const emptyData = () => ({ divisions: [], team_members: [], member_divisions: [], markets: [], dealers: [], visits: [], walkthroughs: [], pages: [], notification_log: [] });
+const emptyData = () => ({ divisions: [], team_members: [], member_divisions: [], markets: [], dealers: [], visits: [], walkthroughs: [], pages: [], notification_log: [], inbound_messages: [] });
 
 setInterval(() => $$('.timer.live').forEach(el => { el.textContent = dur(el.dataset.since); }), 1000);
 

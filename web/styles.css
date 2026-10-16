@@ -237,3 +237,21 @@ legend { font-size: .85rem; font-weight: 600; color: var(--muted); margin-bottom
   .who { display: none; }
   .toolbar .btn { flex: 1; }
 }
+
+/* Text check-ins */
+.inbox-banner {
+  background: color-mix(in srgb, var(--otw) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--otw) 40%, transparent);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 1rem;
+}
+.inbox-banner h3 { color: var(--otw); }
+.inbox-row { display: flex; flex-direction: column; gap: .5rem; padding: .6rem 0; border-top: 1px solid var(--line); }
+.inbox-banner .inbox-row:first-of-type { border-top: 0; }
+.inbox-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+blockquote, .quote { margin: 0; padding: .5rem .75rem; border-left: 3px solid var(--otw); background: var(--surface); border-radius: 0 8px 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+blockquote cite { display: block; font-style: normal; font-size: .75rem; color: var(--muted); margin-top: .25rem; }
+.paste { background: var(--surface-2); border-radius: 10px; padding: .6rem .75rem; margin-bottom: 1rem; }
+.paste summary { cursor: pointer; font-weight: 600; }
+.paste[open] summary { margin-bottom: .5rem; }
+.paste textarea { margin-bottom: .5rem; }
+.paste p { margin: .5rem 0 0; }
+@media (max-width: 520px) { .inbox-fields { grid-template-columns: 1fr; } }
